@@ -1,6 +1,6 @@
 # Aetheria
 
-多智能体安全评估流水线的轻量实现，涵盖 Python 评估器、FastAPI BFF 以及基于 Vue 3 的操作台 UI。该项目复用原始 Aetheria 数据集与输出格式，聚焦于 Azure OpenAI 模型、Top-K 检索式 RAG 与可视化审阅体验，方便快速集成到内部工具链或产品 Demo 中。
+本仓库包含论文《Aetheria: A multimodal interpretable content safety framework based on multi-agent debate and collaboration》的源代码实现，覆盖文中描述的简化多智能体评估流水线、BFF 服务与可视化前端。整体复用原始 Aetheria 数据与输出接口，重点展示如何借助 Azure OpenAI、Top-K RAG 以及多轮辩论式协作来提供可解释的内容安全审核体验，可直接支撑论文实验复现或内部落地。
 
 ## 仓库结构
 
@@ -133,3 +133,141 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 - 若需扩展前端字段，可在 `frontend/src/services/reviewService.js` 中更新响应 Schema，并同步修改组件。
 
 欢迎根据团队需求扩展脚本、补充测试或将依赖固化为内部制品库。
+
+---
+
+## English Version
+
+### Overview
+
+This repository hosts the reference implementation for the paper *“Aetheria: A multimodal interpretable content safety framework based on multi-agent debate and collaboration.”* It reproduces the simplified multi-agent evaluator, the FastAPI BFF, and the Vue 3 workstation UI used in the experiments, showing how Azure OpenAI, top-k RAG retrieval, and role-based debates combine to deliver transparent content moderation.
+
+### Repository Layout
+
+| Path | Description |
+| --- | --- |
+| `aetheria_simple/` | Python evaluator with the agent graph (`graph.py`), node definitions (`agents.py`), config/prompts, and CLI entry (`main.py`). |
+| `aetheria_simple/bff/` | FastAPI backend (`app.py`) exposing `/api/review` via `ReviewService`, handling text plus Base64 images. |
+| `aetheria_simple/scripts/` | Maintenance utilities for building/rebalancing case libraries, creating the Chroma DB, and extracting misclassified samples. |
+| `aetheria_simple/case_libraries/` | Seed case libraries consumed by the Supporter/RAG component. |
+| `aetheria_simple/chroma_db/` | Default Chroma persistence directory (rebuild with the provided scripts as needed). |
+| `frontend/` | Vue 3 + Vite UI with the review console and showcase view. |
+| `result/` (runtime) | CLI evaluation reports (`*.json`) and detailed logs (`*_details.csv`). |
+| `logs/` (runtime) | Per-request traces produced by `ReviewService`. |
+
+### Prerequisites
+
+- Python 3.10+ (use `venv`, `uv`, or Conda for isolation).
+- Node.js ≥ 20.19 (matches `package.json` engines) and npm ≥ 10.
+- Access to Azure OpenAI deployments for GPT-4o/GPT-4o mini and `text-embedding-3-large` (or provide your own deployment map).
+- Writable storage for the Chroma DB (`aetheria_simple/chroma_db` by default).
+
+### Installation
+
+```bash
+# Python dependencies
+cd aetheria_simple
+python -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install -r ../requirements.txt
+
+# Frontend dependencies
+cd ../frontend
+npm install
+```
+
+Feel free to pin dependencies in a custom `pyproject.toml` or lock file if your workflow requires it.
+
+### Environment Variables
+
+All Python services load `.env` at the repo root (thanks to `python-dotenv`) and honor the following keys.
+
+**Required**
+
+| Variable | Aliases | Description |
+| --- | --- | --- |
+| `AETHERIA_SIMPLE_AZURE_ENDPOINT` | `AZURE_ENDPOINT` | Azure OpenAI endpoint (`https://...openai.azure.com/`). |
+| `AETHERIA_SIMPLE_API_KEY` | `API_KEY`, `AZURE_API_KEY` | Azure OpenAI API key. |
+
+**Optional Highlights**
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `AETHERIA_SIMPLE_API_VERSION` | Azure API version | `2024-12-01-preview` |
+| `AETHERIA_SIMPLE_SUPPORTER_MODEL`, etc. | Model per role (supporter/strict/loose/arbiter) | `gpt-4o-mini` / `gpt-4o` |
+| `AETHERIA_SIMPLE_RAG_TOP_K` | Supporter retrieval depth | `3` |
+| `AETHERIA_SIMPLE_ROUNDS` | Debate rounds | `2` |
+| `AETHERIA_SIMPLE_EMBEDDING_MODEL` | Case-library embedding model | `text-embedding-3-large` |
+| `AETHERIA_SIMPLE_CHROMA_PERSIST_DIR` | Chroma storage directory | `./aetheria_simple/chroma_db` |
+| `AETHERIA_SIMPLE_CHROMA_COLLECTION` | Default Chroma collection | `usb_only_img_case_library` |
+| `AETHERIA_SIMPLE_CASE_LIBRARY_PATH` | Case-library JSON path | `./aetheria_simple/case_libraries/default_case_library.json` |
+| `AETHERIA_SIMPLE_DEPLOYMENT_MAP` | JSON deployment map | identity |
+| `AETHERIA_SIMPLE_DEPLOYMENT_<MODEL>` | Per-model override | — |
+| `AETHERIA_SIMPLE_ENABLE_SUPPORTER/STRICT/LOOSE` | Toggle individual roles | `True` |
+
+Set `VITE_API_BASE_URL` inside `frontend/.env` to point the UI at your BFF (defaults to `http://localhost:8000`).
+
+### Usage
+
+**1. CLI Evaluation**
+
+```bash
+cd aetheria_simple
+python -m aetheria_simple.main \
+  --dataset /path/to/usb_text_img_relabeled.json \
+  --limit 200 --workers 8 --skip 0
+```
+
+- Writes summary JSON and detailed CSV files into `result/`.
+- Switch dataset schemas with the presets in `aetheria_simple/data_configs.py`.
+
+**2. FastAPI BFF**
+
+```bash
+uvicorn aetheria_simple.bff.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- `POST /api/review`: accepts `input_1` (text) and optional `input_2` (text or Base64 image).
+- `GET /health`: readiness probe.
+
+**3. Vue Dashboard**
+
+```bash
+cd frontend
+VITE_API_BASE_URL=http://localhost:8000 npm run dev
+```
+
+- Serves the audit console on port `5173` with real-time scoring, RAG insights, and debate traces.
+
+### Case Library & Chroma DB
+
+1. **Case library maintenance**
+   - `python aetheria_simple/scripts/build_balanced_case_library.py`
+   - `python aetheria_simple/scripts/rebalance_dataset.py`
+   - `python aetheria_simple/scripts/case_maintainer.py`
+
+2. **Build the Chroma vector store**
+
+```bash
+python aetheria_simple/scripts/build_database.py \
+  --library-path aetheria_simple/case_libraries/default_case_library.json \
+  --persist-dir aetheria_simple/chroma_db \
+  --collection-name safety_cases_default
+```
+
+### Logs & Troubleshooting
+
+- CLI metrics print to stdout and store artifacts under `result/`.
+- `ReviewService` writes per-request traces to `logs/<request_id>.jsonl` for reproducibility.
+- Common issues:
+  - `Chroma collection not found`: ensure the collection name and persistence dir align with your build.
+  - `Vision model is not configured`: configure `AETHERIA_SIMPLE_DEPLOYMENT_MAP` or `AETHERIA_SIMPLE_DEPLOYMENT_GPT_4O` when accepting images.
+  - Azure throttling/policy errors surface as `api_error` in CLI runs and HTTP 500 on the BFF; check quotas and inputs.
+
+### Development Notes
+
+- Adjust role prompts in `aetheria_simple/prompts.py` to explore new reasoning styles.
+- Override `SimpleRunConfig` via environment variables for quick ablations (models, RAG depth, debate toggles).
+- Extend the UI by updating `frontend/src/services/reviewService.js` and related Vue components when the API schema changes.
+
+Feel free to adapt the stack for your own experiments, add tests, or publish an internal package feed for the dependencies.
