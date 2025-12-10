@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
-from langchain.schema import Document
 
 from aetheria_simple import config, prompts
 from aetheria_simple.utils.usage_tracker import LLMUsageTracker

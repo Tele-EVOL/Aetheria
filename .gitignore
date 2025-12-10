@@ -27,3 +27,6 @@ frontend/.DS_Store
 # --- Misc ---
 .DS_Store
 Thumbs.db
+
+# --- Data ---
+image_data/

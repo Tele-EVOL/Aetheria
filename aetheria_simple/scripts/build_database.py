@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from langchain.docstore.document import Document
+from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_openai import AzureOpenAIEmbeddings
 

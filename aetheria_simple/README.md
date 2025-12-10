@@ -64,3 +64,28 @@ The command prints a summary to stdout and saves JSON/CSV artefacts in the
 
 `--skip` can be used to ignore the first *N* samples before evaluation starts, which is
 helpful when you want to resume from a previous run or focus on a later segment of the dataset.
+
+
+### Batch image annotation
+
+Use the helper script in `aetheria_simple/scripts/annotate_images.py` when you only
+have raw image files and want the simplified evaluator to label them directly:
+
+```bash
+python aetheria_simple/scripts/annotate_images.py \
+  --input-dir /path/to/images \
+  --recursive \
+  --text-template "Please review this image: {name}"
+```
+
+The script base64-encodes each image, feeds it through `ReviewService`, and writes
+both JSON and CSV artefacts under `result/image_annotations/` (override with
+`--output-dir`). Per-request logs still land in `logs/` unless you pass `--log-dir`.
+
+Handy flags:
+
+- `--limit`: stop after *N* files (quick smoke test).
+- `--prompt-profile` / `--rag-collection`: align prompts and retrieval with your
+  chosen case library (defaults match the image-only preset).
+- `--text-template`: customise the textual input shown to the agents; `{name}` and
+  `{path}` placeholders expand to the file name or absolute path.
