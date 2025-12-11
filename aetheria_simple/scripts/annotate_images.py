@@ -7,12 +7,19 @@ import base64
 import csv
 import json
 import mimetypes
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 import imghdr
+
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - tqdm is an optional dependency during runtime
+    tqdm = None
 
 from aetheria_simple.config import DEFAULT_CONFIG, SimpleRunConfig
 from aetheria_simple.services.review_service import ReviewResult, ReviewService
@@ -67,6 +74,12 @@ def parse_args() -> argparse.Namespace:
         "--recursive",
         action="store_true",
         help="Also search subdirectories for images.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of concurrent threads for annotation (default: CPU count).",
     )
     return parser.parse_args()
 
@@ -153,6 +166,44 @@ def serialise_failure(source_file: Path, error: str) -> Dict[str, object]:
     }
 
 
+def determine_worker_count(requested: Optional[int], total_tasks: int) -> int:
+    if requested and requested > 0:
+        return max(1, min(requested, total_tasks))
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(cpu_count, total_tasks))
+
+
+def annotate_single(
+    index: int,
+    image_path: Path,
+    service: ReviewService,
+    text_template: str,
+) -> Tuple[int, Dict[str, object], Optional[str]]:
+    try:
+        data_url = encode_image(image_path)
+    except Exception as exc:
+        message = f"[annotate_images] Skip {image_path}: {exc}"
+        return index, serialise_failure(image_path, f"encoding_error: {exc}"), message
+
+    try:
+        text_input = render_text(text_template, image_path)
+    except Exception as exc:
+        message = f"[annotate_images] Skip {image_path}: {exc}"
+        return index, serialise_failure(image_path, f"text_template_error: {exc}"), message
+
+    try:
+        review = service.review(
+            input_1=text_input,
+            input_2=data_url,
+            metadata={"source_file": str(image_path)},
+        )
+    except Exception as exc:
+        message = f"[annotate_images] Review failed for {image_path}: {exc}"
+        return index, serialise_failure(image_path, f"review_error: {exc}"), message
+
+    return index, serialise_success(review, image_path), None
+
+
 def write_outputs(
     records: Sequence[Dict[str, object]],
     input_dir: Path,
@@ -233,31 +284,45 @@ def main() -> None:
     settings = build_settings(args.prompt_profile, args.rag_collection)
     service = ReviewService(log_dir=args.log_dir, settings=settings)
 
-    records: List[Dict[str, object]] = []
-    for path in image_paths:
-        try:
-            data_url = encode_image(path)
-        except Exception as exc:
-            print(f"[annotate_images] Skip {path}: {exc}", file=sys.stderr)
-            records.append(serialise_failure(path, f"encoding_error: {exc}"))
-            continue
-        try:
-            text_input = render_text(args.text_template, path)
-        except Exception as exc:
-            print(f"[annotate_images] Skip {path}: {exc}", file=sys.stderr)
-            records.append(serialise_failure(path, f"text_template_error: {exc}"))
-            continue
-        try:
-            review = service.review(
-                input_1=text_input,
-                input_2=data_url,
-                metadata={"source_file": str(path)},
+    worker_count = determine_worker_count(args.workers, len(image_paths))
+    records_by_index: Dict[int, Dict[str, object]] = {}
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(
+                annotate_single,
+                index,
+                path,
+                service,
+                args.text_template,
             )
-        except Exception as exc:
-            print(f"[annotate_images] Review failed for {path}: {exc}", file=sys.stderr)
-            records.append(serialise_failure(path, f"review_error: {exc}"))
-            continue
-        records.append(serialise_success(review, path))
+            for index, path in enumerate(image_paths)
+        ]
+
+        iterator = as_completed(futures)
+        if tqdm is not None:
+            iterator = tqdm(iterator, total=len(futures), desc="Annotating images")
+
+        completed = 0
+        for future in iterator:
+            index, record, warning = future.result()
+            records_by_index[index] = record
+            if warning:
+                print(warning, file=sys.stderr)
+            completed += 1
+            if tqdm is None:
+                print(
+                    f"Annotated {completed}/{len(futures)}",
+                    end="\r",
+                    file=sys.stderr,
+                )
+
+    if tqdm is None:
+        print(file=sys.stderr)
+
+    records: List[Dict[str, object]] = [
+        records_by_index[idx] for idx in range(len(image_paths))
+    ]
 
     artifacts = write_outputs(records, input_dir, args.output_dir)
     print("Annotation complete.")
