@@ -8,7 +8,13 @@ from typing import Callable, Dict, List, Optional
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_openai import (
+    AzureChatOpenAI,
+    AzureOpenAIEmbeddings,
+    ChatOpenAI,
+    OpenAIEmbeddings,
+)
 
 from aetheria_simple import config, prompts
 from aetheria_simple.utils.usage_tracker import LLMUsageTracker
@@ -24,18 +30,25 @@ DebaterNode = Callable[[Dict[str, object]], Dict[str, object]]
 ArbiterNode = Callable[[Dict[str, object]], Dict[str, object]]
 
 
-_EMBEDDINGS: Optional[AzureOpenAIEmbeddings] = None
+_EMBEDDINGS: Optional[object] = None
 
 
-def _get_embeddings() -> AzureOpenAIEmbeddings:
+def _get_embeddings():
     global _EMBEDDINGS
     if _EMBEDDINGS is None:
-        _EMBEDDINGS = AzureOpenAIEmbeddings(
-            model=config.EMBEDDING_MODEL_NAME,
-            azure_endpoint=config.AZURE_ENDPOINT,
-            api_key=config.API_KEY,
-            api_version=config.API_VERSION,
-        )
+        if config.USING_AZURE:
+            _EMBEDDINGS = AzureOpenAIEmbeddings(
+                model=config.EMBEDDING_MODEL_NAME,
+                azure_endpoint=config.AZURE_ENDPOINT,
+                api_key=config.API_KEY,
+                api_version=config.API_VERSION,
+            )
+        else:
+            _EMBEDDINGS = OpenAIEmbeddings(
+                model=config.EMBEDDING_MODEL_NAME,
+                api_key=config.API_KEY,
+                base_url=config.OPENAI_BASE or None,
+            )
     return _EMBEDDINGS
 
 
@@ -127,7 +140,7 @@ def _summarise_cases(docs: List[Document]) -> str:
 def create_supporter_node(
     settings: config.SimpleRunConfig,
     system_prompt: str,
-    llm: AzureChatOpenAI,
+    llm: BaseChatModel,
     usage_tracker: Optional[LLMUsageTracker] = None,
 ) -> SupporterNode:
     collection_name = settings.rag.collection_name or config.CHROMA_COLLECTION_NAME
@@ -245,7 +258,7 @@ def _format_messages(messages: List[BaseMessage]) -> str:
 def create_regular_node(
     role: str,
     system_prompt: str,
-    llm: AzureChatOpenAI,
+    llm: BaseChatModel,
     usage_tracker: Optional[LLMUsageTracker] = None,
 ) -> DebaterNode:
     def agent_node(state: Dict[str, object]) -> Dict[str, object]:
@@ -322,7 +335,7 @@ Provide your analysis and score now."""
 def create_arbiter_node(
     role: str,
     system_prompt: str,
-    llm: AzureChatOpenAI,
+    llm: BaseChatModel,
     *,
     strict_bias: float = 0.6,
     usage_tracker: Optional[LLMUsageTracker] = None,
@@ -404,7 +417,7 @@ class AgentBundle:
     arbiter: ArbiterNode
 
 
-def _resolve_model_name(llm: AzureChatOpenAI) -> str:
+def _resolve_model_name(llm: BaseChatModel) -> str:
     for attr in ("model_name", "model", "deployment_name"):
         value = getattr(llm, attr, None)
         if isinstance(value, str) and value.strip():
@@ -433,7 +446,7 @@ def _extract_usage_payload(message: AIMessage) -> Dict[str, object]:
 
 
 def _invoke_with_tracking(
-    llm: AzureChatOpenAI,
+    llm: BaseChatModel,
     messages: List[BaseMessage],
     tracker: Optional[LLMUsageTracker],
 ) -> AIMessage:
@@ -453,18 +466,28 @@ class _LLMRegistry:
     """Lazy loader that reuses chat models across roles."""
 
     def __init__(self) -> None:
-        self._cache: Dict[str, AzureChatOpenAI] = {}
+        self._cache: Dict[str, BaseChatModel] = {}
 
-    def get(self, model_name: str) -> AzureChatOpenAI:
-        if model_name not in self._cache:
-            deployment = config.AZURE_DEPLOYMENT_MAP.get(model_name, model_name)
-            self._cache[model_name] = AzureChatOpenAI(
+    def _create_llm(self, model_name: str) -> BaseChatModel:
+        deployment = config.DEPLOYMENT_MAP.get(model_name, model_name)
+        if config.USING_AZURE:
+            return AzureChatOpenAI(
                 model=deployment,
                 azure_endpoint=config.AZURE_ENDPOINT,
                 api_key=config.API_KEY,
                 api_version=config.API_VERSION,
                 temperature=0,
             )
+        return ChatOpenAI(
+            model=deployment,
+            api_key=config.API_KEY,
+            base_url=config.OPENAI_BASE or None,
+            temperature=0,
+        )
+
+    def get(self, model_name: str) -> BaseChatModel:
+        if model_name not in self._cache:
+            self._cache[model_name] = self._create_llm(model_name)
         return self._cache[model_name]
 
 

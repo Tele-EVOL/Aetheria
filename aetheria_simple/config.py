@@ -26,10 +26,29 @@ def _env_required(primary: str, *fallbacks: str, description: str) -> str:
     raise ValueError(f"缺少必要的环境变量({description}): {candidates}")
 
 
-def _load_deployment_map() -> Dict[str, str]:
+def _detect_provider(azure_endpoint: str, openai_key: str) -> str:
+    explicit = _env_str("AETHERIA_SIMPLE_PROVIDER") or _env_str("AETHERIA_PROVIDER")
+    explicit = explicit.lower()
+    if explicit in {"azure", "openai"}:
+        return explicit
+
+    if azure_endpoint:
+        return "azure"
+    if openai_key:
+        return "openai"
+
+    raise ValueError(
+        "未找到 Azure 或 OpenAI 配置，请设置 AETHERIA_SIMPLE_AZURE_ENDPOINT "
+        "+ AETHERIA_SIMPLE_API_KEY，或设置 OPENAI_API_KEY。"
+    )
+
+
+def _load_deployment_map(provider: str) -> Dict[str, str]:
     defaults = {
         "gpt-4o": "gpt-4o",
-        "gpt-4o-mini": "gpt-4o-mini-high-rate",
+        "gpt-4o-mini": "gpt-4o-mini"
+        if provider == "azure"
+        else "gpt-4o-mini",
         "gpt-4.1": "gpt-4.1",
     }
 
@@ -59,16 +78,32 @@ def _default_path(*parts: str) -> str:
 
 load_dotenv()
 
-AZURE_ENDPOINT = _env_required(
-    "AETHERIA_SIMPLE_AZURE_ENDPOINT", "AZURE_ENDPOINT", description="Azure Endpoint"
-)
-API_KEY = _env_required(
-    "AETHERIA_SIMPLE_API_KEY", "API_KEY", "AZURE_API_KEY", description="Azure API Key"
-)
-API_VERSION = _env_str(
-    "AETHERIA_SIMPLE_API_VERSION", _env_str("AZURE_API_VERSION", "2024-12-01-preview")
-)
-AZURE_DEPLOYMENT_MAP = _load_deployment_map()
+AZURE_ENDPOINT = _env_str("AETHERIA_SIMPLE_AZURE_ENDPOINT", _env_str("AZURE_ENDPOINT"))
+AZURE_API_KEY = _env_str("AETHERIA_SIMPLE_API_KEY", _env_str("API_KEY", _env_str("AZURE_API_KEY")))
+OPENAI_API_KEY = _env_str("AETHERIA_SIMPLE_OPENAI_API_KEY", _env_str("OPENAI_API_KEY"))
+OPENAI_BASE = _env_str("AETHERIA_SIMPLE_OPENAI_BASE", _env_str("OPENAI_BASE"))
+
+PROVIDER = _detect_provider(AZURE_ENDPOINT, OPENAI_API_KEY)
+USING_AZURE = PROVIDER == "azure"
+
+if USING_AZURE:
+    API_KEY = _env_required(
+        "AETHERIA_SIMPLE_API_KEY", "API_KEY", "AZURE_API_KEY", description="Azure API Key"
+    )
+    API_VERSION = _env_str(
+        "AETHERIA_SIMPLE_API_VERSION", _env_str("AZURE_API_VERSION", "2024-12-01-preview")
+    )
+else:
+    API_KEY = _env_required(
+        "AETHERIA_SIMPLE_OPENAI_API_KEY", "OPENAI_API_KEY", description="OpenAI API Key"
+    )
+    API_VERSION = _env_str("AETHERIA_SIMPLE_API_VERSION", _env_str("OPENAI_API_VERSION", ""))
+    # Avoid leaking a stale Azure endpoint when Azure is not selected
+    AZURE_ENDPOINT = ""
+
+DEPLOYMENT_MAP = _load_deployment_map(PROVIDER)
+# Backwards-compatible alias for older code paths
+AZURE_DEPLOYMENT_MAP = DEPLOYMENT_MAP
 
 EMBEDDING_MODEL_NAME = _env_str(
     "AETHERIA_SIMPLE_EMBEDDING_MODEL", "text-embedding-3-large"

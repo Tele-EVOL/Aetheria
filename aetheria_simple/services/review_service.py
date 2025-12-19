@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import imghdr
 
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 
 from aetheria_simple import config
 from aetheria_simple.config import SimpleRunConfig
@@ -135,18 +135,24 @@ class ReviewService:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._evaluator = evaluator or SimpleMultiAgentEvaluator(settings)
-        self._vision_model = vision_model or config.AZURE_DEPLOYMENT_MAP.get("gpt-4o")
-        self._vision_client: AzureOpenAI | None = None
+        self._vision_model = vision_model or config.DEPLOYMENT_MAP.get("gpt-4o")
+        self._vision_client: object | None = None
 
-    def _get_vision_client(self) -> AzureOpenAI:
+    def _get_vision_client(self) -> object:
         if not self._vision_model:
             raise RuntimeError("Vision model is not configured for image captioning.")
         if self._vision_client is None:
-            self._vision_client = AzureOpenAI(
-                api_key=config.API_KEY,
-                azure_endpoint=config.AZURE_ENDPOINT,
-                api_version=config.API_VERSION,
-            )
+            if config.USING_AZURE:
+                self._vision_client = AzureOpenAI(
+                    api_key=config.API_KEY,
+                    azure_endpoint=config.AZURE_ENDPOINT,
+                    api_version=config.API_VERSION,
+                )
+            else:
+                self._vision_client = OpenAI(
+                    api_key=config.API_KEY,
+                    base_url=config.OPENAI_BASE or None,
+                )
         return self._vision_client
 
     def _describe_image(self, base64_payload: str, mime_type: str) -> str:
@@ -303,4 +309,3 @@ class ReviewService:
             arbiter_vote=result.get("arbiter_vote"),
             arbiter_payload=result.get("arbiter_payload", {}),
         )
-

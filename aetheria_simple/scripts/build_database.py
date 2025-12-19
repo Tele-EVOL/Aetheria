@@ -3,19 +3,26 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_openai import AzureOpenAIEmbeddings
+from langchain_core.documents import Document
+from langchain_openai import AzureOpenAIEmbeddings, OpenAIEmbeddings
 
 from .. import config
 
 # --- 配置 ---
-EMBEDDING_MODEL = AzureOpenAIEmbeddings(
-    model=config.EMBEDDING_MODEL_NAME,
-    azure_endpoint=config.AZURE_ENDPOINT,
-    api_key=config.API_KEY,
-    api_version=config.API_VERSION,
-)
+if config.USING_AZURE:
+    EMBEDDING_MODEL = AzureOpenAIEmbeddings(
+        model=config.EMBEDDING_MODEL_NAME,
+        azure_endpoint=config.AZURE_ENDPOINT,
+        api_key=config.API_KEY,
+        api_version=config.API_VERSION,
+    )
+else:
+    EMBEDDING_MODEL = OpenAIEmbeddings(
+        model=config.EMBEDDING_MODEL_NAME,
+        api_key=config.API_KEY,
+        base_url=config.OPENAI_BASE or None,
+    )
 
 
 def _to_str_list(value: object) -> List[str]:
