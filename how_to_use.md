@@ -1,5 +1,12 @@
 # Aetheria 快速使用清单
 
+## 目录速览
+- `aetheria_simple/`：Python 简化评估器与 FastAPI BFF。主要文件：`main.py` CLI 入口；`graph.py` 多智能体流程与裁决；`agents.py` 角色定义；`config.py`/`prompts.py`/`prompts_en.py` 配置与提示；`evaluate.py` 批量评估逻辑；`data_configs.py` 数据字段映射；`services/` 业务服务；`bff/app.py` FastAPI 接口；`scripts/` 数据库与案例库维护工具。
+- `frontend/`：Vue 3 + Vite 前端界面，调用 BFF 提供可视化审核体验。
+- `data/`：示例数据集与辅助脚本，便于本地快速跑通与实验。
+- `logs/`：运行时生成的审核日志与模型对话记录。
+- `result/`：批量评估的输出报告与明细（运行生成）。
+
 ## 1) 选择提供商并配置环境变量
 - 任选其一：
   - **Azure OpenAI**：`AETHERIA_SIMPLE_AZURE_ENDPOINT=https://xxx.openai.azure.com/`，`AETHERIA_SIMPLE_API_KEY=...`，可选 `AETHERIA_SIMPLE_API_VERSION`、`AETHERIA_SIMPLE_DEPLOYMENT_*`。
